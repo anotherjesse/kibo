@@ -45,12 +45,12 @@ class RobotFace:
         self,
         display=DISPLAY,
         *,
-        eye_radius:int=32,         # Slightly smaller eyes
-        pupil_radius:int=10,       # Smaller pupils
-        iris_color:Tuple[int,int,int]=(0,170,255),  # Softer blue
+        eye_radius:int=25,         # Smaller eyes (was 32)
+        pupil_radius:int=25,       # Same as eye radius for full black eyes
+        iris_color:Tuple[int,int,int]=(0,0,0),  # Black iris
         pupil_color:Tuple[int,int,int]=(0,0,0),
-        eye_white:Tuple[int,int,int]=(255,255,255),
-        bg_color:Tuple[int,int,int]=(255,255,255),  # White background
+        eye_white:Tuple[int,int,int]=(0,0,0),  # Black eyes instead of white
+        bg_color:Tuple[int,int,int]=(0,0,0),  # Black background
         fps:int=40,
     ) -> None:
         self.display = display
@@ -117,9 +117,9 @@ class RobotFace:
             draw = ImageDraw.Draw(img)
             
             # Draw cat ears
-            ear_size = self.eye_r * 1.5  # Equal width and height
+            ear_size = self.eye_r * 2.0  # Make ears taller (was 1.5)
             ear_spacing = w // 2.8  # Bring ears a bit closer together
-            ear_y_pos = eye_y - self.eye_r * 4.5  # Position ears much higher relative to eyes
+            ear_y_pos = eye_y - self.eye_r * 3.5  # Move ears DOWN (was 4.5)
             ear_line_width = 5  # Thicker line width for hollow ears
             
             # Function to rotate a point around an anchor
@@ -137,11 +137,14 @@ class RobotFace:
             
             # Left ear (hollow with pink inside)
             left_ear_angle = -35  # Rotate 35 degrees counterclockwise (was -30)
-            left_ear_base = (w//2 - ear_spacing, ear_y_pos + ear_size)  # Base point of ear
+            # Keep the top point of the ear in the same place
+            left_ear_top = (w//2 - ear_spacing, ear_y_pos)
+            # Adjust the base position to accommodate longer ears
+            left_ear_base = (w//2 - ear_spacing, ear_y_pos + ear_size)
             
             left_ear_points_original = [
                 (w//2 - ear_spacing - ear_size//2, ear_y_pos + ear_size),  # Bottom left
-                (w//2 - ear_spacing, ear_y_pos),  # Top point
+                left_ear_top,  # Top point - stays the same
                 (w//2 - ear_spacing + ear_size//2, ear_y_pos + ear_size),  # Bottom right
             ]
             
@@ -151,6 +154,9 @@ class RobotFace:
                 rotate_point(left_ear_points_original[1], left_ear_base, left_ear_angle),
                 rotate_point(left_ear_points_original[2], left_ear_base, left_ear_angle),
             ]
+            
+            # Draw filled white triangle for left ear
+            draw.polygon(left_ear_points, fill=(255, 255, 255))
             
             # Small pink triangle inside left ear - also rotated
             inner_scale = 0.85  # Much larger inner triangle
@@ -170,17 +176,16 @@ class RobotFace:
             
             draw.polygon(inner_left_ear_points, fill=(255, 150, 180))  # Brighter pink
             
-            # Draw lines for left ear outline
-            draw.line([left_ear_points[0], left_ear_points[1]], fill=self.line_color, width=ear_line_width)
-            draw.line([left_ear_points[1], left_ear_points[2]], fill=self.line_color, width=ear_line_width)
-            
             # Right ear (hollow with pink inside)
             right_ear_angle = 35  # Rotate 35 degrees clockwise (was 30)
-            right_ear_base = (w//2 + ear_spacing, ear_y_pos + ear_size)  # Base point of ear
+            # Keep the top point of the ear in the same place
+            right_ear_top = (w//2 + ear_spacing, ear_y_pos)
+            # Adjust the base position to accommodate longer ears
+            right_ear_base = (w//2 + ear_spacing, ear_y_pos + ear_size)
             
             right_ear_points_original = [
                 (w//2 + ear_spacing - ear_size//2, ear_y_pos + ear_size),  # Bottom left
-                (w//2 + ear_spacing, ear_y_pos),  # Top point
+                right_ear_top,  # Top point - stays the same
                 (w//2 + ear_spacing + ear_size//2, ear_y_pos + ear_size),  # Bottom right
             ]
             
@@ -190,6 +195,9 @@ class RobotFace:
                 rotate_point(right_ear_points_original[1], right_ear_base, right_ear_angle),
                 rotate_point(right_ear_points_original[2], right_ear_base, right_ear_angle),
             ]
+            
+            # Draw filled white triangle for right ear
+            draw.polygon(right_ear_points, fill=(255, 255, 255))
             
             # Small pink triangle inside right ear - also rotated
             inner_right_ear_points_original = [
@@ -206,20 +214,16 @@ class RobotFace:
             
             draw.polygon(inner_right_ear_points, fill=(255, 150, 180))  # Brighter pink
             
-            # Draw lines for right ear outline
-            draw.line([right_ear_points[0], right_ear_points[1]], fill=self.line_color, width=ear_line_width)
-            draw.line([right_ear_points[1], right_ear_points[2]], fill=self.line_color, width=ear_line_width)
-            
             # Calculate where ears connect to head (for head positioning)
             ear_base_y = ear_y_pos + ear_size
             
             # Draw head outline - positioned slightly below ear bases
             head_radius = int(h * 0.4)  # Large circle for the head
             head_center_y = ear_base_y + head_radius - 25  # Move up more (25px instead of 15px)
-            # Draw a thick black circle outline around the head
+            # Draw a filled white circle for the head
             draw.ellipse((w//2 - head_radius, head_center_y - head_radius, 
                           w//2 + head_radius, head_center_y + head_radius), 
-                          outline=(0, 0, 0), width=6)
+                          fill=(255, 255, 255), outline=(255, 255, 255))
             
             # Limit eye movement to be less intense
             dx = int(self._look_h * (self.eye_r - self.pupil_r - 4) * 0.7)
@@ -238,18 +242,28 @@ class RobotFace:
                 # Add outline to the eye for better contrast on white background
                 draw.ellipse((cx-self.eye_r, cy-self.eye_r, cx+self.eye_r, cy+self.eye_r), outline=self.line_color, width=2)
                 
-                # Add small highlight to eyes for cuteness
-                highlight_size = self.iris_r // 3
-                highlight_offset = self.iris_r // 2
-                draw.ellipse((cx-self.iris_r+dx, cy-self.iris_r+dy, cx+self.iris_r+dx, cy+self.iris_r+dy), fill=self.iris_color)
-                draw.ellipse((cx-self.pupil_r+dx, cy-self.pupil_r+dy, cx+self.pupil_r+dx, cy+self.pupil_r+dy), fill=self.pupil_color)
-                draw.ellipse((cx-highlight_size+dx+highlight_offset, cy-highlight_size+dy-highlight_offset, 
-                             cx+highlight_size+dx+highlight_offset, cy+highlight_size+dy-highlight_offset), fill=(255,255,255))
+                # For completely black eyes, we don't need internal details
+                # Just keep the eye movement for blinking logic, but don't draw iris/pupil/highlights
+            
+            # Draw cat nose (small triangle between eyes)
+            nose_size = self.eye_r // 2  # Size of the nose (half the eye radius)
+            nose_y_offset = 0  # No vertical offset - center at eye level (was self.eye_r // 2)
+            nose_color = (0, 0, 0)  # Black nose (was pink)
+            
+            nose_points = [
+                (w//2, eye_y + nose_y_offset + nose_size),  # Bottom point
+                (w//2 - nose_size//2, eye_y + nose_y_offset),  # Top left
+                (w//2 + nose_size//2, eye_y + nose_y_offset),  # Top right
+            ]
+            
+            draw.polygon(nose_points, fill=nose_color)
+            # Add a thin outline to the nose for definition
+            draw.polygon(nose_points, outline=self.line_color, width=1)
             
             # Draw mouth with more expressive styles
-            mx0, mx1 = w//4, 3*w//4
-            my = int(h*0.7)  # Move mouth up (was 0.78)
-            mouth_h = h//6    # Make mouth height slightly smaller
+            mx0, mx1 = w//3, 2*w//3  # Make mouth less wide (was w//4 to 3*w//4)
+            my = int(h*0.67)  # Move mouth up (was 0.72)
+            mouth_h = h//8    # Make mouth height smaller (was h//6)
             
             if self._expression == "happy":
                 # Cuter smile with rounder edges
