@@ -1,155 +1,128 @@
-"""
-servo_controller.py (v2)
-Threaded servo controller with per‑channel limits and centers for the
-Adafruit 16‑channel PWM Servo HAT.
-
-Highlights
-==========
-* **Per‑channel min, max, center** enforcement — commands get clamped so
-  you never over‑drive a joint.
-* `.move()` API unchanged but now safe: angles outside range are clipped.
-* `.center_all(duration)` helper to glide every servo to its defined
-  center.
-* Linear easing, 50 Hz tick, thread‑safe just like v1.
-
-Channel defaults for your robot
--------------------------------
-* `0`: 30 – 80 °   (center 55)
-* `1`: 0 – 180 °  (center 90)
-* `2`: 40 – 140 ° (center 90)
-* `3`: 0 – 180 °  (center 60)
-
-Change those limits by passing a `limits` dict when you construct
-`ServoController`.
-
-Example
--------
-```python
-from servo_controller import ServoController
-ctl = ServoController()
-# Bob up (servo 0) and nod down (servo 3) over 1 s
-ctl.move({0: 80, 3: 20, 1: None, 2: None}, 1.0)
-# Recentre everything in two seconds
-ctl.center_all(2.0)
-```
-"""
-
 import time
-import threading
-from dataclasses import dataclass
-from typing import Dict, Optional, Iterable
-from adafruit_servokit import ServoKit
+import random
+
+# Core Kibo APIs -------------------------------------------------------------
+#  - Body : controls the 4 hobby servos in Kibo’s neck/body.
+#  - face            : high‑level API for the LCD face (expression, blink, look).
+
+from body import Body  # make sure kibo.py is on your PYTHONPATH
+from face import face
+
+# ---------------------------------------------------------------------------
+# Helper routines – small, reusable motion / face snippets
+# ---------------------------------------------------------------------------
+
+def nod(ctl: Body, down: int = 20, up: int = 60, t: float = 0.6):
+    """Quick nod: servo 3 is the tilt/nod axis."""
+    ctl.move({3: down}, t)
+    time.sleep(t)
+    ctl.move({3: up}, t)
+    time.sleep(t)
 
 
-@dataclass
-class Limits:
-    min_angle: float
-    max_angle: float
-    center: float
-    name: str
-
-    def clamp(self, value: float) -> float:
-        return max(self.min_angle, min(self.max_angle, value))
-
-
-DEFAULT_LIMITS: Dict[int, Limits] = {
-    0: Limits(30, 80, 55, 'bob'),
-    1: Limits(0, 180, 90, 'sway'),
-    2: Limits(40, 140, 90, 'ear wiggle'),
-    3: Limits(0, 180, 60, 'nodding'),
-}
+def sway_left_right(ctl: Body, angle: int = 60, t: float = 0.4):
+    """Sway torso (servo 1) left then right."""
+    ctl.move({1: 0}, t)
+    time.sleep(t)
+    ctl.move({1: angle}, t)
+    time.sleep(t)
+    ctl.move({1: 180 - angle}, t)
+    time.sleep(t)
+    ctl.move({1: 90}, t)  # back to center
+    time.sleep(t)
 
 
-class ServoController:
-    """Background servo mover with limits / centers."""
+def ear_wiggle(ctl: Body, repeats: int = 4, t: float = 0.2):
+    """Wiggle ears (servo 2)."""
+    for _ in range(repeats):
+        ctl.move({2: 40}, t)
+        time.sleep(t)
+        ctl.move({2: 140}, t)
+        time.sleep(t)
+    ctl.move({2: 90}, t)
+    time.sleep(t)
 
-    def __init__(
-        self,
-        active_channels: Iterable[int] = (0, 1, 2, 3),
-        limits: Dict[int, Limits] = None,
-        tick_hz: int = 50,
-        i2c_address: int = 0x40,
-    ) -> None:
-        self.kit = ServoKit(channels=16, address=i2c_address)
-        self.tick = 1.0 / tick_hz
-        self.channels = list(active_channels)
-        self.limits = {**DEFAULT_LIMITS, **(limits or {})}
+# ---------------------------------------------------------------------------
+# Scene definitions
+# ---------------------------------------------------------------------------
 
-        self._lock = threading.Lock()
-        self._current: Dict[int, float] = {
-            ch: self.kit.servo[ch].angle or self.limits[ch].center for ch in self.channels
-        }
-        self._target = dict(self._current)
-        self._delta = {ch: 0.0 for ch in self.channels}
-        self._steps_left = {ch: 0 for ch in self.channels}
+def scene_wake_up(face_mod, ctl: Body):
+    """Kibo wakes from sleep → neutral and alert."""
+    # Start with eyes closed (simulate sleep by neutral + look down)
+    face_mod.set_expression("neutral")
+    face_mod.look(0, -0.4)
+    time.sleep(1.0)
+    # Slow blink awake
+    face_mod.blink("both")
+    time.sleep(0.5)
+    face_mod.blink("both")
+    # Stretch: small sway + nod
+    sway_left_right(ctl, angle=45, t=0.5)
+    nod(ctl, down=10, up=60, t=0.4)
+    face_mod.look(0, 0)  # eyes forward
+    time.sleep(0.5)
 
-        self._stop_evt = threading.Event()
-        self._thread = threading.Thread(target=self._worker, daemon=True)
-        self._thread.start()
 
-    # -----------------------------------------------------------
-    # Public API
-    # -----------------------------------------------------------
+def scene_meh(face_mod, ctl: Body):
+    """Kibo feels meh → sad expression & half‑hearted shrug."""
+    face_mod.set_expression("sad")
+    # Slight head tilt (servo 0) and minimal sway to convey lethargy
+    ctl.move({0: 70}, 0.6)
+    ctl.move({1: 60}, 0.8)
+    time.sleep(1.2)
+    ctl.center_all(0.8)
+    time.sleep(0.8)
 
-    def move(self, targets: Dict[int, Optional[float]], duration: float) -> None:
-        """Move channels to new angles, clamped to limits.
 
-        Args:
-            targets: dict {channel: angle or None}
-            duration: seconds to complete move (>=0)
-        """
-        if duration <= 0:
-            duration = self.tick
-        steps = max(1, int(duration / self.tick))
+def scene_happy_dance(face_mod, ctl: Body, bars: int = 4):
+    """Simple two‑beat left/right dance with a happy face."""
+    face_mod.set_expression("happy")
+    for _ in range(bars):
+        sway_left_right(ctl, angle=70, t=0.35)
+        ear_wiggle(ctl, repeats=2, t=0.15)
+    # Finish with a cheerful blink
+    face_mod.blink(random.choice(["left", "right", "both"]))
 
-        with self._lock:
-            for ch in self.channels:
-                new_angle = targets.get(ch, None)
-                if new_angle is not None:
-                    # Clamp to limits
-                    new_angle = self.limits[ch].clamp(float(new_angle))
-                    cur = self._current[ch]
-                    self._target[ch] = new_angle
-                    self._delta[ch] = (new_angle - cur) / steps
-                    self._steps_left[ch] = steps
-                # If None: keep existing trajectory.
+# ---------------------------------------------------------------------------
+# Main orchestration
+# ---------------------------------------------------------------------------
 
-    def center_all(self, duration: float = 1.0) -> None:
-        """Move every channel to its center over *duration* seconds."""
-        self.move({ch: self.limits[ch].center for ch in self.channels}, duration)
+def run_demo():
+    ctl = Body()
+    try:
+        # Initial neutral/reset
+        ctl.center_all(1.2)
+        face.set_expression("neutral")
+        time.sleep(1.0)
 
-    def get_angles(self) -> Dict[int, float]:
-        with self._lock:
-            return dict(self._current)
+        # --- Demo sequence --------------------------------------------------
+        scene_wake_up(face, ctl)
+        time.sleep(0.5)
 
-    def stop(self) -> None:
-        self._stop_evt.set()
-        self._thread.join()
+        scene_meh(face, ctl)
+        time.sleep(0.5)
 
-    # -----------------------------------------------------------
-    # Internal worker
-    # -----------------------------------------------------------
+        scene_happy_dance(face, ctl, bars=6)
+        time.sleep(0.5)
 
-    def _worker(self) -> None:
-        while not self._stop_evt.is_set():
-            time.sleep(self.tick)
-            with self._lock:
-                for ch in self.channels:
-                    if self._steps_left[ch] > 0:
-                        self._current[ch] += self._delta[ch]
-                        self._steps_left[ch] -= 1
-                        self.kit.servo[ch].angle = self._current[ch]
+        # Return to neutral & idle random loop for fun
+        face.set_expression("neutral")
+        ctl.center_all(1.0)
+        idle_start = time.time()
+        while time.time() - idle_start < 15:  # 15 s of idle randomness
+            random.choice([
+                lambda: face.look(random.uniform(-1, 1), random.uniform(-0.5, 0.5)),
+                lambda: face.blink(random.choice(["both", "left", "right"])),
+            ])()
+            time.sleep(random.uniform(1.0, 2.0))
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ctl.stop()
+        face.stop()
 
 
 if __name__ == "__main__":
-    ctl = ServoController()
-    try:
-
-        ctl.center_all(1.5)
-        ctl.move({0: 80, 3: 20}, 1.0)
-        time.sleep(2.2)
-        ctl.center_all(1.5)
-        time.sleep(1.6)
-    finally:
-        ctl.stop()
+    run_demo()
 
